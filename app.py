@@ -10,22 +10,25 @@ def main():
     st.title("📺 YouTube Multimodal RAG Pipeline")
     st.markdown("---")
 
-    # Sidebar for configuration
     with st.sidebar:
-        st.header("Settings")
-        api_key = st.text_input("Groq API Key", type="password", value=os.getenv("GROQ_API_KEY", ""))
-        google_key = st.text_input("Google AI Key (for transcription sanity check)", type="password", value=os.getenv("GOOGLE_API_KEY", ""))
-        nvidia_key = st.text_input("NVIDIA API Key (for Embeddings)", type="password", value=os.getenv("NVIDIA_API_KEY", ""))
+        st.header("⚙️ Configuration")
         
-        if api_key: os.environ["GROQ_API_KEY"] = api_key
-        if google_key: os.environ["GOOGLE_API_KEY"] = google_key
-        if nvidia_key: os.environ["NVIDIA_API_KEY"] = nvidia_key
+        # Only show inputs if keys are missing
+        nv_ready = os.getenv("NVIDIA_API_KEY") is not None
+        
+        if not nv_ready:
+            nv_key = st.text_input("NVIDIA API Key", type="password")
+            if nv_key: os.environ["NVIDIA_API_KEY"] = nv_key
+        else:
+            st.sidebar.success("✅ NVIDIA Key loaded!")
 
     # Main Input
     youtube_url = st.text_input("Enter YouTube Video URL")
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "chunks" not in st.session_state:
+        st.session_state.chunks = []
 
     col1, col2 = st.columns([1, 1])
     
@@ -33,17 +36,47 @@ def main():
         if st.button("🚀 Index Video (Advanced RAG)"):
             if not youtube_url:
                 st.error("Please enter a URL.")
-            elif not os.getenv("NVIDIA_API_KEY") or not os.getenv("GROQ_API_KEY"):
-                st.error("Missing API Keys (Groq/NVIDIA).")
+            elif not os.getenv("NVIDIA_API_KEY"):
+                st.error("Missing NVIDIA API Key. Please check Sidebar or .env")
             else:
-                with st.status("🏗️ Building Video Index...", expanded=True) as status:
-                    st.write("Initializing Multimodal Agent...")
+                with st.status("🚀 Processing Video...", expanded=True) as status:
+                    progress_bar = st.progress(0, text="Initializing...")
+                    
+                    # Map node names to friendly messages
+                    node_messages = {
+                        "input_handler": "🔍 Validating URL...",
+                        "fetch_content": "📥 Downloading Media...",
+                        "multimodal_processor": "🧠 Analyzing with NVIDIA NIM...",
+                        "index_data": "🗂️ Creating Temporal Index..."
+                    }
+                    
                     inputs = {"url": youtube_url}
+                    final_state = {}
+                    nodes = list(node_messages.keys())
+                    
                     for output in langgraph_app.stream(inputs):
                         for key, value in output.items():
-                            st.write(f"Node `{key}` completed.")
-                    status.update(label="✅ Index Ready!", state="complete", expanded=False)
-                st.success("Temporal chunks indexed in ChromaDB with NVIDIA NIM!")
+                            msg = node_messages.get(key, f"Processing {key}...")
+                            st.write(msg)
+                            
+                            # Calculate progress percentage
+                            if key in nodes:
+                                progress = (nodes.index(key) + 1) / len(nodes)
+                                progress_bar.progress(progress, text=msg)
+                            
+                            final_state.update(value)
+                    
+                    if "chunks" in final_state:
+                        st.session_state.chunks = final_state["chunks"]
+                    
+                    if final_state.get("error"):
+                        status.update(label="❌ Indexing Failed", state="error", expanded=True)
+                        st.error(f"Pipeline Error: {final_state['error']}")
+                    else:
+                        progress_bar.progress(1.0, text="✅ Processing Complete!")
+                        status.update(label="✅ Video Indexed!", state="complete", expanded=False)
+                        st.balloons()
+                        st.success("🎉 Video processed! You can now ask any question below.")
 
     with col2:
         st.subheader("Temporal Chat")
@@ -55,11 +88,18 @@ def main():
             st.chat_message("user").write(user_query)
             
             with st.spinner("Retrieving from Video Index..."):
-                # We need the chunks from the state to perform BM25
-                # Since we don't persist state across app runs easily without a DB, 
-                # we'll run the RAG part of the graph.
-                result = langgraph_app.invoke({"url": youtube_url, "query": user_query})
-                response = result.get("response", "I don't have enough information.")
+                # Pass existing chunks to the graph to skip indexing nodes
+                inputs = {
+                    "url": youtube_url, 
+                    "query": user_query, 
+                    "chunks": st.session_state.chunks
+                }
+                result = langgraph_app.invoke(inputs)
+                
+                if result.get("error"):
+                    response = f"❌ Error: {result['error']}"
+                else:
+                    response = result.get("response", "I don't have enough information.")
                 
             st.session_state.messages.append({"role": "assistant", "content": response})
             st.chat_message("assistant").write(response)

@@ -1,7 +1,22 @@
 [project]
 name = "youtube-multimodal-rag-pipeline"
 version = "0.1.0"
-description = "Add your description here"
+description = "Advanced YouTube Multimodal RAG Pipeline"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "langgraph",
+    "langchain",
+    "langchain-community",
+    "chromadb",
+    "yt-dlp",
+    "openai",
+    "streamlit",
+    "opencv-python",
+    "fpdf2",
+    "python-dotenv",
+    "pillow",
+    "langchain-nvidia-ai-endpoints",
+    "rank-bm25",
+    "nvidia-riva-client",
+]
